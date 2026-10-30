@@ -9,6 +9,7 @@ import requests
 from bs4 import BeautifulSoup
 import urllib3
 import re
+import os
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -40,36 +41,25 @@ def init_db():
         ]
         c.executemany("INSERT INTO tasas_bcv (fecha, tasa_bcv, tasa_paralelo, notas) VALUES (?, ?, ?, ?)", tasas_demo)
 
-    c.execute("SELECT COUNT(*) FROM impresoras")
-    if c.fetchone()[0] == 0:
-        impresoras_default = [
-            ("Creality K1 Max", 350, 2.40, 0.00052, 1),
-            ("Creality Hi Combo (CFS)", 320, 2.20, 0.00045, 1),
-            ("Creality Ender 3 Mod", 180, 1.80, 0.00030, 1),
-            ("Granja General FDM", 250, 2.00, 0.00040, 1)
-        ]
-        # Check table columns or insert appropriately. Let's check schema for impresoras.
     conn.commit()
     conn.close()
 
 init_db()
 
-# Ensure impresoras table has costo_hora and desgaste_por_hora columns or handle them
 def ensure_columns():
     conn = get_connection()
     c = conn.cursor()
-    # Check if costo_hora_usd exists in impresoras
     c.execute("PRAGMA table_info(impresoras)")
     cols = [info[1] for info in c.fetchall()]
     if "costo_hora_usd" not in cols:
         try:
             c.execute("ALTER TABLE impresoras ADD COLUMN costo_hora_usd REAL DEFAULT 2.40")
-        except:
+        except Exception:
             pass
     if "desgaste_por_hora" not in cols:
         try:
             c.execute("ALTER TABLE impresoras ADD COLUMN desgaste_por_hora REAL DEFAULT 0.00052")
-        except:
+        except Exception:
             pass
     conn.commit()
     conn.close()
@@ -123,35 +113,62 @@ def obtener_tasa_bcv_actual():
         return float(df.iloc[0]["tasa_bcv"]), float(df.iloc[0]["tasa_paralelo"]), df.iloc[0]["fecha"]
     return 46.90, 54.80, str(date.today())
 
-# PDF Generator EXCLUSIVO EN USD (Sin Bolívares para no confundir al cliente)
+# ==============================================================================
+# GENERADOR PDF EXCLUSIVO EN USD CON MÚLTIPLES ÍTEMS, LOGO Y RIF J-50769354-6
+# ==============================================================================
 def generar_pdf_cotizacion_usd(datos_oferta):
     pdf = FPDF()
     pdf.add_page()
     
-    # Encabezado Corporativo Protofab
+    # 1. ENCABEZADO CORPORATIVO CON LOGO Y RIF
     pdf.set_fill_color(18, 28, 45)
-    pdf.rect(0, 0, 210, 38, 'F')
+    pdf.rect(0, 0, 210, 42, 'F')
     
+    # Buscar automáticamente el logo en la carpeta del proyecto
+    logo_insertado = False
+    for nombre_logo in ["tarjetas de presentacion.png", "logo.png", "image_2.png", "logo_protofab.png"]:
+        if os.path.exists(nombre_logo):
+            try:
+                # Fondo blanco suave detrás del logo para que resalte el cubo azul
+                pdf.set_fill_color(255, 255, 255)
+                pdf.rect(11, 5, 25, 31, 'F')
+                pdf.image(nombre_logo, x=12, y=6, w=23)
+                logo_insertado = True
+                break
+            except Exception:
+                pass
+
+    if not logo_insertado:
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_xy(12, 15)
+        pdf.cell(25, 10, "[PROTOFAB]")
+
+    # Texto del encabezado
     pdf.set_text_color(255, 255, 255)
+    pdf.set_xy(40, 10)
     pdf.set_font("Helvetica", "B", 22)
-    pdf.set_xy(12, 10)
     pdf.cell(100, 10, "PROTOFAB", ln=True)
     
-    pdf.set_font("Helvetica", "", 10)
-    pdf.set_xy(12, 21)
-    pdf.cell(100, 6, "Manufactura Digital, Diseño CAD 3D e Ingeniería | Maturín, Venezuela", ln=True)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_xy(40, 20)
+    pdf.cell(100, 5, "Manufactura Digital, Diseño CAD 3D e Ingeniería", ln=True)
+    pdf.set_xy(40, 25)
+    pdf.cell(100, 5, "Maturín, Monagas, Venezuela   |   RIF: J-50769354-6", ln=True)
     
-    # Cuadro de Código de Oferta
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.set_xy(140, 10)
-    pdf.cell(58, 8, f"OFERTA: {datos_oferta['codigo']}", align="R", ln=True)
+    # Cuadro de Código de Oferta (Totalmente Editable)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_xy(135, 10)
+    pdf.cell(63, 8, f"OFERTA: {datos_oferta['codigo']}", align="R", ln=True)
     pdf.set_font("Helvetica", "", 10)
-    pdf.set_xy(140, 18)
-    pdf.cell(58, 6, f"Fecha: {datos_oferta['fecha']}", align="R", ln=True)
+    pdf.set_xy(135, 18)
+    pdf.cell(63, 6, f"Fecha: {datos_oferta['fecha']}", align="R", ln=True)
+    pdf.set_xy(135, 24)
+    pdf.cell(63, 6, "Moneda: USD ($)", align="R", ln=True)
 
-    # Datos del Cliente
+    # 2. DATOS DEL CLIENTE
     pdf.set_text_color(30, 30, 30)
-    pdf.set_xy(12, 46)
+    pdf.set_xy(12, 48)
     pdf.set_font("Helvetica", "B", 11)
     pdf.cell(0, 7, "DATOS DEL CLIENTE:", ln=True)
     pdf.set_font("Helvetica", "", 10)
@@ -160,42 +177,50 @@ def generar_pdf_cotizacion_usd(datos_oferta):
     pdf.cell(0, 6, f"Categoría de Servicio: {datos_oferta['categoria']}", ln=True)
     pdf.ln(5)
 
-    # Tabla de Ítems (EXCLUSIVO EN USD)
+    # 3. TABLA DE MÚLTIPLES ÍTEMS (EXCLUSIVO EN USD)
     pdf.set_fill_color(230, 235, 242)
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(135, 9, "Descripción del Servicio / Proyecto", border=1, fill=True)
-    pdf.cell(55, 9, "Monto Total USD ($)", border=1, align="R", fill=True, ln=True)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(14, 8, "Cant.", border=1, align="C", fill=True)
+    pdf.cell(120, 8, "Descripción del Servicio / Pieza / Proyecto", border=1, fill=True)
+    pdf.cell(27, 8, "P. Unitario ($)", border=1, align="R", fill=True)
+    pdf.cell(29, 8, "Subtotal ($)", border=1, align="R", fill=True, ln=True)
 
-    pdf.set_font("Helvetica", "", 10)
-    x_start = pdf.get_x()
-    y_start = pdf.get_y()
-    pdf.multi_cell(135, 7, datos_oferta['descripcion'], border=1)
-    y_end = pdf.get_y()
-    alto_fila = y_end - y_start
-
-    pdf.set_xy(x_start + 135, y_start)
-    pdf.cell(55, alto_fila, f"${datos_oferta['total_usd']:,.2f}", border=1, align="R", ln=True)
+    pdf.set_font("Helvetica", "", 9)
+    for item in datos_oferta['items']:
+        x_start = pdf.get_x()
+        y_start = pdf.get_y()
+        
+        pdf.set_xy(x_start + 14, y_start)
+        pdf.multi_cell(120, 6, str(item['desc']), border=0)
+        y_end = pdf.get_y()
+        alto_fila = max(7, y_end - y_start)
+        
+        pdf.set_xy(x_start, y_start)
+        pdf.cell(14, alto_fila, str(item['cant']), border=1, align="C")
+        pdf.cell(120, alto_fila, "", border=1)
+        pdf.cell(27, alto_fila, f"${item['pu']:,.2f}", border=1, align="R")
+        pdf.cell(29, alto_fila, f"${item['sub']:,.2f}", border=1, align="R", ln=True)
 
     pdf.ln(4)
 
     # Desglose de Totales (Solo USD)
     pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(135, 7, "", border=0)
-    pdf.cell(35, 7, "Subtotal Sin IVA:", border=1, align="R")
-    pdf.cell(20, 7, f"${datos_oferta['subtotal_usd']:,.2f}", border=1, align="R", ln=True)
+    pdf.cell(134, 7, "", border=0)
+    pdf.cell(32, 7, "Subtotal Sin IVA:", border=1, align="R")
+    pdf.cell(24, 7, f"${datos_oferta['subtotal_usd']:,.2f}", border=1, align="R", ln=True)
 
     if datos_oferta['es_facturable']:
-        pdf.cell(135, 7, "", border=0)
-        pdf.cell(35, 7, f"IVA ({datos_oferta['iva_pct']}%):", border=1, align="R")
-        pdf.cell(20, 7, f"${datos_oferta['iva_usd']:,.2f}", border=1, align="R", ln=True)
+        pdf.cell(134, 7, "", border=0)
+        pdf.cell(32, 7, f"IVA ({datos_oferta['iva_pct']}%):", border=1, align="R")
+        pdf.cell(24, 7, f"${datos_oferta['iva_usd']:,.2f}", border=1, align="R", ln=True)
 
     pdf.set_fill_color(18, 28, 45)
     pdf.set_text_color(255, 255, 255)
-    pdf.cell(135, 9, "", border=0)
-    pdf.cell(35, 9, "TOTAL A PAGAR:", border=1, align="R", fill=True)
-    pdf.cell(20, 9, f"${datos_oferta['total_usd']:,.2f}", border=1, align="R", fill=True, ln=True)
+    pdf.cell(134, 9, "", border=0)
+    pdf.cell(32, 9, "TOTAL A PAGAR:", border=1, align="R", fill=True)
+    pdf.cell(24, 9, f"${datos_oferta['total_usd']:,.2f}", border=1, align="R", fill=True, ln=True)
 
-    # Condiciones Comerciales
+    # 4. CONDICIONES COMERCIALES
     pdf.set_text_color(30, 30, 30)
     pdf.ln(10)
     pdf.set_font("Helvetica", "B", 10)
@@ -203,17 +228,20 @@ def generar_pdf_cotizacion_usd(datos_oferta):
     pdf.set_font("Helvetica", "", 9)
     Modalidad = f"Factura Fiscal (Incluye IVA {datos_oferta['iva_pct']}%)" if datos_oferta['es_facturable'] else "Nota de Entrega / Control Interno"
     pdf.multi_cell(0, 5, f"""1. Modalidad de documento: {Modalidad}.
-2. Moneda de cobro: Dólares estadounidenses (USD).
+2. Moneda de referencia: Dólares estadounidenses (USD).
 3. Condiciones de pago: 50% de anticipo para iniciar producción / modelado CAD y 50% contra entrega.
 4. Validez de la oferta: 5 días continuos.""")
 
     return bytes(pdf.output())
 
+# ==============================================================================
+# MENÚ LATERAL (SIDEBAR)
+# ==============================================================================
 tasa_actual, tasa_par_actual, fecha_tasa = obtener_tasa_bcv_actual()
 
 with st.sidebar:
     st.title("⚙️ PROTOFAB ERP")
-    st.caption("Sistema Bimonetario & Cotizador 3D")
+    st.caption("RIF: J-50769354-6 | Sistema Bimonetario")
     st.metric("💵 Tasa BCV Vigente", f"Bs. {tasa_actual:,.2f}", f"Fecha: {fecha_tasa}")
     
     if st.button("🔄 Sincronizar BCV Hoy", use_container_width=True):
@@ -244,6 +272,9 @@ with st.sidebar:
         ]
     )
 
+# ==============================================================================
+# MÓDULO 1: DASHBOARD DIRECTIVO
+# ==============================================================================
 if modulo == "📊 1. Dashboard Directivo":
     st.header("📊 Dashboard Financiero, Fiscal y de Liquidez - Protofab")
     conn = get_connection()
@@ -287,6 +318,9 @@ if modulo == "📊 1. Dashboard Directivo":
         saldo_cta = ent - sal
         cols_cta[idx].info(f"""**{cta}**\n\n### ${saldo_cta:,.2f} USD\n*(Eq. Bs. {saldo_cta*tasa_actual:,.2f})*""")
 
+# ==============================================================================
+# MÓDULO 2: REGISTRAR INGRESOS
+# ==============================================================================
 elif modulo == "💰 2. Registrar Ingresos":
     st.header("💰 Registro de Ingresos")
     with st.form("form_ingreso"):
@@ -340,6 +374,9 @@ elif modulo == "💰 2. Registrar Ingresos":
                 conn.close()
                 st.rerun()
 
+# ==============================================================================
+# MÓDULO 3: REGISTRAR EGRESOS
+# ==============================================================================
 elif modulo == "📉 3. Registrar Egresos":
     st.header("📉 Registro de Egresos")
     with st.form("form_egreso"):
@@ -392,122 +429,146 @@ elif modulo == "📉 3. Registrar Egresos":
                 conn.close()
                 st.rerun()
 
-# PDF Generator EXCLUSIVO EN USD con múltiples ítems y logo oficial
-def generar_pdf_cotizacion_usd(datos_oferta):
-    pdf = FPDF()
-    pdf.add_page()
+# ==============================================================================
+# MÓDULO 4: COTIZADOR 3D DE MÚLTIPLES ÍTEMS (MODELO EXACTO PROTOFAB)
+# ==============================================================================
+elif modulo == "🧮 4. Cotizador 3D (Modelo Exacto)":
+    st.header("🧮 Calculadora de Costos Impresión 3D (Múltiples Ítems Protofab)")
     
-    # 1. ENCABEZADO CORPORATIVO CON LOGO Y RIF
-    pdf.set_fill_color(18, 28, 45)  # Azul oscuro oscuro
-    pdf.rect(0, 0, 210, 42, 'F')
+    if "items_cotizacion" not in st.session_state:
+        st.session_state["items_cotizacion"] = []
+
+    if "codigo_oferta_actual" not in st.session_state:
+        st.session_state["codigo_oferta_actual"] = f"COT-{date.today().strftime('%Y%m%d')}-01"
+
+    st.subheader("🛠️ 1. Calcular y Agregar Ítem a la Cotización")
     
-    # Insertar el logo de Protofab en el encabezado
-    try:
-        # Se asume que guardaste el logo adjunto como "image_2.png" en tu carpeta
-        pdf.image("image_2.png", x=12, y=6, w=22) 
-    except Exception:
-        # Si no se encuentra la imagen, se dibuja un placeholder con texto para no tumbar el script
-        pdf.set_font("Helvetica", "B", 18)
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_xy(12, 12)
-        pdf.cell(30, 10, "[LOGO]")
+    col_p1, col_p2, col_p3, col_p4, col_p5, col_p6 = st.columns(6)
+    costo_promedio_hora = col_p1.number_input("Costo x Hora (USD)", value=2.40, step=0.10, key="ct_hora")
+    tiempo_h = col_p2.number_input("Tiempo (H)", value=0, min_value=0, step=1, key="ct_h")
+    tiempo_m = col_p3.number_input("Tiempo (M)", value=45, min_value=0, max_value=59, step=1, key="ct_m")
+    costo_material = col_p4.number_input("Costo Material ($)", value=0.72, step=0.01, key="ct_mat")
+    multi_material_pct = col_p5.number_input("Multiplicador Material %", value=10.0, step=1.0, key="ct_mult")
+    cantidad_nueva = col_p6.number_input("Cantidad de Piezas", value=1, min_value=1, step=1, key="ct_cant")
 
-    # Texto del encabezado
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_xy(38, 10)
-    pdf.set_font("Helvetica", "B", 22)
-    pdf.cell(100, 10, "PROTOFAB", ln=True)
+    # Vista previa en vivo del cálculo unitario antes de agregarlo
+    desgaste_unitario = 0.00052
+    tiempo_total_horas = tiempo_h + (tiempo_m / 60.0)
+    costo_impresion_sin_material = costo_promedio_hora * tiempo_total_horas
+    desgaste_maquina = desgaste_unitario * (tiempo_h * 60 + tiempo_m)
+    ganancia_sobre_material = costo_material * (multi_material_pct / 100.0)
+    material_total = costo_material + ganancia_sobre_material
+    precio_unitario_calc = round(material_total + costo_impresion_sin_material + desgaste_maquina, 2)
+
+    st.caption(
+        f"🔍 **Vista Previa Unitaria:** Material: `${material_total:,.2f}` | "
+        f"Impresión sin mat.: `${costo_impresion_sin_material:,.2f}` | "
+        f"Desgaste: `${desgaste_maquina:,.2f}` ➡️ **Precio Unitario Sin IVA: `${precio_unitario_calc:,.2f} USD`** "
+        f"(Subtotal x {cantidad_nueva} uds = **`${precio_unitario_calc * cantidad_nueva:,.2f} USD`**)"
+    )
+
+    c_desc, c_add = st.columns([4, 1])
+    desc_item = c_desc.text_input("Descripción del Servicio / Pieza", value="Impresión 3D de pieza personalizada bajo demanda", key="ct_desc")
     
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_xy(38, 20)
-    pdf.cell(100, 5, "Manufactura Digital, Diseño CAD 3D e Ingeniería", ln=True)
-    pdf.set_xy(38, 25)
-    pdf.cell(100, 5, "Maturín, Monagas, Venezuela   |   RIF: J-50769354-6", ln=True)
+    if c_add.button("➕ Agregar Ítem", use_container_width=True, type="primary"):
+        st.session_state["items_cotizacion"].append({
+            "cant": int(cantidad_nueva),
+            "desc": desc_item,
+            "pu": precio_unitario_calc,
+            "sub": round(precio_unitario_calc * int(cantidad_nueva), 2)
+        })
+        st.rerun()
+
+    st.divider()
+    st.subheader("📋 2. Ítems en el Presupuesto (Edita cantidad o descripción directamente)")
     
-    # Cuadro de Código de Oferta (Totalmente Editable)
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.set_xy(140, 10)
-    pdf.cell(58, 8, f"OFERTA: {datos_oferta['codigo']}", align="R", ln=True)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.set_xy(140, 18)
-    pdf.cell(58, 6, f"Fecha: {datos_oferta['fecha']}", align="R", ln=True)
-    pdf.set_xy(140, 24)
-    pdf.cell(58, 6, "Moneda: USD ($)", align="R", ln=True)
+    if st.session_state["items_cotizacion"]:
+        idx_a_eliminar = None
+        for idx, item in enumerate(st.session_state["items_cotizacion"]):
+            col_cant, col_desc, col_pu, col_sub, col_del = st.columns([1, 4, 1.3, 1.3, 0.7])
+            
+            nueva_cant = col_cant.number_input("Cant.", value=int(item["cant"]), min_value=1, step=1, key=f"edit_cant_{idx}")
+            nueva_desc = col_desc.text_input("Descripción del ítem", value=item["desc"], key=f"edit_desc_{idx}")
+            
+            # Actualizar en caliente sin perder el foco ni borrar datos
+            st.session_state["items_cotizacion"][idx]["cant"] = nueva_cant
+            st.session_state["items_cotizacion"][idx]["desc"] = nueva_desc
+            st.session_state["items_cotizacion"][idx]["sub"] = round(item["pu"] * nueva_cant, 2)
 
-    # 2. DATOS DEL CLIENTE
-    pdf.set_text_color(30, 30, 30)
-    pdf.set_xy(12, 48)
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 7, "DATOS DEL CLIENTE:", ln=True)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 6, f"Cliente / Empresa: {datos_oferta['cliente']}", ln=True)
-    pdf.cell(0, 6, f"RIF / Cédula: {datos_oferta['rif']}   |   Contacto: {datos_oferta['telefono']}", ln=True)
-    pdf.cell(0, 6, f"Categoría de Servicio: {datos_oferta['categoria']}", ln=True)
-    pdf.ln(5)
+            col_pu.metric("P. Unitario", f"${item['pu']:,.2f}")
+            col_sub.metric("Subtotal", f"${st.session_state['items_cotizacion'][idx]['sub']:,.2f}")
+            
+            if col_del.button("🗑️", key=f"btn_del_{idx}", help="Eliminar este ítem"):
+                idx_a_eliminar = idx
 
-    # 3. TABLA DE MÚLTIPLES ÍTEMS (EXCLUSIVO EN USD)
-    pdf.set_fill_color(230, 235, 242)
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.cell(12, 8, "Cant.", border=1, align="C", fill=True)
-    pdf.cell(123, 8, "Descripción del Servicio / Pieza / Proyecto", border=1, fill=True)
-    pdf.cell(25, 8, "P. Unitario ($)", border=1, align="R", fill=True)
-    pdf.cell(28, 8, "Subtotal ($)", border=1, align="R", fill=True, ln=True)
+        if idx_a_eliminar is not None:
+            st.session_state["items_cotizacion"].pop(idx_a_eliminar)
+            st.rerun()
 
-    pdf.set_font("Helvetica", "", 9)
-    for item in datos_oferta['items']:
-        x_start = pdf.get_x()
-        y_start = pdf.get_y()
+        # Totales Globales
+        subtotal_global = round(sum(i["sub"] for i in st.session_state["items_cotizacion"]), 2)
         
-        # Guardar cantidad y descripcion multilínea
-        pdf.cell(12, 7, str(item['cant']), border=0, align="C")
+        c_iva1, c_iva2, c_iva3 = st.columns([1, 1, 2])
+        iva_pct = c_iva1.number_input("IVA aplicable (%)", value=16.0, step=1.0)
+        facturable_of = c_iva2.checkbox("Incluir Factura Fiscal (+ IVA)", value=True)
+        if c_iva3.button("🧹 Vaciar todos los ítems"):
+            st.session_state["items_cotizacion"] = []
+            st.rerun()
+
+        iva_global = round(subtotal_global * (iva_pct / 100.0), 2) if facturable_of else 0.0
+        total_global = round(subtotal_global + iva_global, 2)
+
+        col_tot1, col_tot2, col_tot3 = st.columns(3)
+        col_tot1.metric("Subtotal Sin IVA", f"${subtotal_global:,.2f} USD")
+        col_tot2.metric(f"IVA ({iva_pct}%)", f"${iva_global:,.2f} USD" if facturable_of else "$0.00 USD")
+        col_tot3.metric("TOTAL DE LA OFERTA", f"${total_global:,.2f} USD")
+
+        # 3. DATOS DEL CLIENTE Y CÓDIGO DE COTIZACIÓN EDITABLE
+        st.divider()
+        st.subheader("📄 3. Datos del Cliente y Descarga de Cotización PDF")
         
-        # Procesar descripción con multi_cell
-        pdf.set_xy(x_start + 12, y_start)
-        pdf.multi_cell(123, 6, item['desc'], border=0)
-        y_end = pdf.get_y()
-        alto_fila = max(7, y_end - y_start)
+        c_cod, c_cli, c_rif = st.columns(3)
+        codigo_oferta = c_cod.text_input("Código de Cotización (Editable)", value=st.session_state["codigo_oferta_actual"])
+        st.session_state["codigo_oferta_actual"] = codigo_oferta
         
-        # Volver al flujo para dibujar bordes del recuadro
-        pdf.set_xy(x_start, y_start)
-        pdf.cell(12, alto_fila, "", border=1)
-        pdf.cell(123, alto_fila, "", border=1)
-        pdf.cell(25, alto_fila, f"${item['pu']:,.2f}", border=1, align="R")
-        pdf.cell(28, alto_fila, f"${item['sub']:,.2f}", border=1, align="R", ln=True)
+        cliente_of = c_cli.text_input("Nombre del Cliente / Empresa", value="Cliente Protofab")
+        rif_of = c_rif.text_input("RIF / Cédula del Cliente", value="J-00000000-0")
+        
+        c_tel, c_serv = st.columns(2)
+        tel_of = c_tel.text_input("Teléfono de Contacto", value="+58 414-0000000")
+        cat_of = c_serv.selectbox("Categoría del Servicio", ["Impresión 3D bajo demanda", "Diseño e impresión 3D", "Diseño 3D", "Proyecto especial"])
 
-    pdf.ln(4)
+        datos_pdf = {
+            "codigo": codigo_oferta,
+            "fecha": str(date.today()),
+            "cliente": cliente_of,
+            "rif": rif_of,
+            "telefono": tel_of,
+            "categoria": cat_of,
+            "items": st.session_state["items_cotizacion"],
+            "subtotal_usd": subtotal_global,
+            "es_facturable": facturable_of,
+            "iva_pct": iva_pct,
+            "iva_usd": iva_global,
+            "total_usd": total_global
+        }
+        
+        pdf_bytes = generar_pdf_cotizacion_usd(datos_pdf)
+        
+        st.download_button(
+            label="⬇️ Descargar Cotización PDF Oficial (Solo USD + Logo + RIF J-50769354-6)",
+            data=pdf_bytes,
+            file_name=f"{codigo_oferta}_{cliente_of.replace(' ', '_')}.pdf",
+            mime="application/pdf",
+            type="primary",
+            use_container_width=True
+        )
+    else:
+        st.info("👆 Configura los tiempos/materiales arriba y presiona **'➕ Agregar Ítem'** para armar la cotización.")
 
-    # Desglose de Totales (Solo USD)
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(135, 7, "", border=0)
-    pdf.cell(35, 7, "Subtotal Sin IVA:", border=1, align="R")
-    pdf.cell(20, 7, f"${datos_oferta['subtotal_usd']:,.2f}", border=1, align="R", ln=True)
-
-    if datos_oferta['es_facturable']:
-        pdf.cell(135, 7, "", border=0)
-        pdf.cell(35, 7, f"IVA ({datos_oferta['iva_pct']}%):", border=1, align="R")
-        pdf.cell(20, 7, f"${datos_oferta['iva_usd']:,.2f}", border=1, align="R", ln=True)
-
-    pdf.set_fill_color(18, 28, 45)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(135, 9, "", border=0)
-    pdf.cell(35, 9, "TOTAL A PAGAR:", border=1, align="R", fill=True)
-    pdf.cell(20, 9, f"${datos_oferta['total_usd']:,.2f}", border=1, align="R", fill=True, ln=True)
-
-    # 4. CONDICIONES COMERCIALES
-    pdf.set_text_color(30, 30, 30)
-    pdf.ln(10)
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(0, 6, "CONDICIONES COMERCIALES:", ln=True)
-    pdf.set_font("Helvetica", "", 9)
-    Modalidad = f"Factura Fiscal (Incluye IVA {datos_oferta['iva_pct']}%)" if datos_oferta['es_facturable'] else "Nota de Entrega / Control Interno"
-    pdf.multi_cell(0, 5, f"""1. Modalidad de documento: {Modalidad}.
-2. Moneda de cobro: Dólares estadounidenses (USD).
-3. Condiciones de pago: 50% de anticipo para iniciar producción / modelado CAD y 50% contra entrega.
-4. Los pagos en Bolívares (VES) se calcularán a la tasa oficial del BCV del día de la transacción.
-5. Validez de la oferta: 5 días continuos.""")
-
-    return bytes(pdf.output())
-
+# ==============================================================================
+# MÓDULO 5: DEUDAS (CxC / CxP)
+# ==============================================================================
 elif modulo == "📋 5. Deudas (CxC / CxP)":
     st.header("📋 Cuentas por Cobrar y por Pagar")
     with st.form("form_deuda"):
@@ -550,6 +611,9 @@ elif modulo == "📋 5. Deudas (CxC / CxP)":
                 conn.close()
                 st.rerun()
 
+# ==============================================================================
+# MÓDULO 6: TASAS BCV & LIMPIEZA
+# ==============================================================================
 elif modulo == "🏦 6. Tasas BCV & Limpieza":
     st.header("🏦 Tasas BCV y Mantenimiento")
     if st.button("⚡ Sincronizar Tasa BCV Ahora", type="primary"):
@@ -567,6 +631,7 @@ elif modulo == "🏦 6. Tasas BCV & Limpieza":
 
     conn = get_connection()
     st.dataframe(pd.read_sql_query("SELECT * FROM tasas_bcv ORDER BY fecha DESC", conn), use_container_width=True)
+    conn.close()
 
     st.divider()
     if st.button("🗑️ Vaciar Todos los Registros Operativos"):

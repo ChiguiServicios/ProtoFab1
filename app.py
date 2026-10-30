@@ -130,7 +130,7 @@ def generar_pdf_cotizacion_usd(datos_oferta):
         if os.path.exists(nombre_logo):
             try:
                 # Fondo blanco suave detrás del logo para que resalte el cubo azul
-                pdf.set_fill_color(1, 73, 169)
+                pdf.set_fill_color(255, 255, 255)
                 pdf.rect(11, 5, 25, 31, 'F')
                 pdf.image(nombre_logo, x=12, y=6, w=23)
                 logo_insertado = True

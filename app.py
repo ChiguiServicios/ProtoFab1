@@ -214,7 +214,7 @@ def generar_pdf_cotizacion_usd(datos_oferta):
         pdf.cell(32, 7, f"IVA ({datos_oferta['iva_pct']}%):", border=1, align="R")
         pdf.cell(24, 7, f"${datos_oferta['iva_usd']:,.2f}", border=1, align="R", ln=True)
 
-    pdf.set_fill_color(18, 28, 45)
+    pdf.set_fill_color(1, 73, 169)
     pdf.set_text_color(255, 255, 255)
     pdf.cell(134, 9, "", border=0)
     pdf.cell(32, 9, "TOTAL A PAGAR:", border=1, align="R", fill=True)

@@ -61,6 +61,22 @@ def ensure_columns():
             c.execute("ALTER TABLE impresoras ADD COLUMN desgaste_por_hora REAL DEFAULT 0.00052")
         except Exception:
             pass
+
+    # Tabla de Swaps (Intercambios entre billeteras/monedas)
+    c.execute("""CREATE TABLE IF NOT EXISTS swaps (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fecha DATE NOT NULL,
+        cuenta_origen TEXT NOT NULL,
+        moneda_origen TEXT NOT NULL,
+        monto_origen REAL NOT NULL,
+        cuenta_destino TEXT NOT NULL,
+        moneda_destino TEXT NOT NULL,
+        monto_destino REAL NOT NULL,
+        tasa_bcv_dia REAL NOT NULL,
+        salida_usd_bcv REAL NOT NULL,
+        entrada_usd_bcv REAL NOT NULL,
+        notas TEXT
+    )""")
     conn.commit()
     conn.close()
 
@@ -281,6 +297,7 @@ if modulo == "📊 1. Dashboard Directivo":
     df_ing = pd.read_sql_query("SELECT * FROM ingresos", conn)
     df_egr = pd.read_sql_query("SELECT * FROM egresos", conn)
     df_deu = pd.read_sql_query("SELECT * FROM deudas", conn)
+    df_swp = pd.read_sql_query("SELECT * FROM swaps", conn)
     conn.close()
 
     ing_bruto_usd = df_ing["total_usd_bcv"].sum() if not df_ing.empty else 0.0
@@ -292,11 +309,14 @@ if modulo == "📊 1. Dashboard Directivo":
     egr_base_usd = df_egr["costo_base_usd"].sum() if not df_egr.empty else 0.0
     iva_credito_usd = df_egr["iva_credito_usd"].sum() if not df_egr.empty else 0.0
 
+    # Efecto neto cambiario de los Swaps en la liquidez total expresada en USD BCV
+    ajuste_swaps_usd = (df_swp["entrada_usd_bcv"].sum() - df_swp["salida_usd_bcv"].sum()) if not df_swp.empty else 0.0
+
     utilidad_operativa_usd = ing_base_usd - egr_base_usd
     iva_por_pagar_usd = max(0.0, iva_debito_usd - iva_credito_usd - retenciones_usd)
     iva_por_pagar_ves = iva_por_pagar_usd * tasa_actual
 
-    liquidez_total_usd = ing_bruto_usd - egr_bruto_usd
+    liquidez_total_usd = (ing_bruto_usd - egr_bruto_usd) + ajuste_swaps_usd
     cxc_pendiente = df_deu[df_deu["tipo"] == "Por Cobrar (Cliente)"]["saldo_pendiente_usd"].sum() if not df_deu.empty else 0.0
     cxp_pendiente = df_deu[df_deu["tipo"] == "Por Pagar (Proveedor/Socio)"]["saldo_pendiente_usd"].sum() if not df_deu.empty else 0.0
     liquidez_libre_real = liquidez_total_usd - iva_por_pagar_usd - cxp_pendiente
@@ -304,18 +324,21 @@ if modulo == "📊 1. Dashboard Directivo":
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("💵 Liquidez Total", f"${liquidez_total_usd:,.2f}", f"Bs. {liquidez_total_usd*tasa_actual:,.2f}")
     col2.metric("🛡️ Liquidez Libre Real", f"${liquidez_libre_real:,.2f}", "Libre de IVA y CxP")
-    col3.metric("📈 Utilidad Neta", f"${utilidad_operativa_usd:,.2f}", f"Base Ing: ${ing_base_usd:,.2f}")
+    col3.metric("📈 Utilidad Neta", f"${utilidad_operativa_usd:,.2f}", f"Diff. Swap: ${ajuste_swaps_usd:,.2f}")
     col4.metric("🏛️ Provisión SENIAT", f"${iva_por_pagar_usd:,.2f}", f"Bs. {iva_por_pagar_ves:,.2f}")
     col5.metric("🤝 Cartera CxC vs CxP", f"Cobrar: ${cxc_pendiente:,.2f}", f"Pagar: -${cxp_pendiente:,.2f}")
 
     st.divider()
-    st.subheader("🏦 Liquidez por Billetera")
+    st.subheader("🏦 Liquidez por Billetera (Incluye Swaps)")
     cuentas = ["Banco VES", "Efectivo USD", "Binance USDT / Zelle"]
     cols_cta = st.columns(3)
     for idx, cta in enumerate(cuentas):
-        ent = df_ing[df_ing["cuenta_destino"] == cta]["total_usd_bcv"].sum() if not df_ing.empty else 0.0
-        sal = df_egr[df_egr["cuenta_origen"] == cta]["total_usd_bcv"].sum() if not df_egr.empty else 0.0
-        saldo_cta = ent - sal
+        ent_ing = df_ing[df_ing["cuenta_destino"] == cta]["total_usd_bcv"].sum() if not df_ing.empty else 0.0
+        sal_egr = df_egr[df_egr["cuenta_origen"] == cta]["total_usd_bcv"].sum() if not df_egr.empty else 0.0
+        ent_swp = df_swp[df_swp["cuenta_destino"] == cta]["entrada_usd_bcv"].sum() if not df_swp.empty else 0.0
+        sal_swp = df_swp[df_swp["cuenta_origen"] == cta]["salida_usd_bcv"].sum() if not df_swp.empty else 0.0
+        
+        saldo_cta = (ent_ing + ent_swp) - (sal_egr + sal_swp)
         cols_cta[idx].info(f"""**{cta}**\n\n### ${saldo_cta:,.2f} USD\n*(Eq. Bs. {saldo_cta*tasa_actual:,.2f})*""")
 
 # ==============================================================================
@@ -370,6 +393,70 @@ elif modulo == "💰 2. Registrar Ingresos":
             if st.button("🚨 Eliminar Ingreso", type="primary"):
                 conn = get_connection()
                 conn.execute("DELETE FROM ingresos WHERE id = ?", (op[sel],))
+                conn.commit()
+                conn.close()
+                st.rerun()
+                
+                st.divider()
+    st.subheader("🔄 Swap / Cambio de Divisas entre Cuentas (VES ⇄ USD / USDT)")
+    with st.form("form_swap"):
+        s1, s2, s3 = st.columns(3)
+        fecha_swp = s1.date_input("Fecha del Swap", value=date.today())
+        tasa_bcv_swp = s2.number_input("Tasa BCV de Referencia", min_value=1.0, value=tasa_actual, step=0.1)
+        notas_swp = s3.text_input("Nota (ej. Compra USDT P2P Binance)")
+
+        col_sal, col_ent = st.columns(2)
+        with col_sal:
+            st.markdown("📤 **Lo que Entregas (Sale de tu cuenta)**")
+            cta_orig_swp = st.selectbox("Cuenta Origen", ["Banco VES", "Binance USDT / Zelle", "Efectivo USD"], key="swp_co")
+            mon_orig_swp = st.selectbox("Moneda Entregada", ["VES", "USD"], key="swp_mo")
+            monto_orig_swp = st.number_input("Monto Entregado", min_value=0.0, step=10.0, key="swp_mto_o")
+
+        with col_ent:
+            st.markdown("📥 **Lo que Recibes (Entra a tu cuenta)**")
+            cta_dest_swp = st.selectbox("Cuenta Destino", ["Binance USDT / Zelle", "Banco VES", "Efectivo USD"], key="swp_cd")
+            mon_dest_swp = st.selectbox("Moneda Recibida", ["USD", "VES"], key="swp_md")
+            monto_dest_swp = st.number_input("Monto Recibido", min_value=0.0, step=1.0, key="swp_mto_d")
+
+        if st.form_submit_button("🔄 Ejecutar Swap y Actualizar Saldos", type="primary"):
+            if monto_orig_swp > 0 and monto_dest_swp > 0:
+                # Equivalente contable en USD BCV de la salida y la entrada
+                salida_usd = monto_orig_swp if mon_orig_swp == "USD" else (monto_orig_swp / tasa_bcv_swp)
+                entrada_usd = monto_dest_swp if mon_dest_swp == "USD" else (monto_dest_swp / tasa_bcv_swp)
+
+                conn = get_connection()
+                conn.execute("""INSERT INTO swaps 
+                    (fecha, cuenta_origen, moneda_origen, monto_origen, cuenta_destino, moneda_destino, monto_destino, tasa_bcv_dia, salida_usd_bcv, entrada_usd_bcv, notas)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (str(fecha_swp), cta_orig_swp, mon_orig_swp, monto_orig_swp, cta_dest_swp, mon_dest_swp, monto_dest_swp, tasa_bcv_swp, salida_usd, entrada_usd, notas_swp))
+                conn.commit()
+                conn.close()
+                st.success(f"✅ Swap registrado: Salieron {monto_orig_swp:,.2f} {mon_orig_swp} ({cta_orig_swp}) ➡️ Entraron {monto_dest_swp:,.2f} {mon_dest_swp} ({cta_dest_swp})")
+                st.rerun()
+
+    conn = get_connection()
+    df_swp_hist = pd.read_sql_query("SELECT * FROM swaps ORDER BY id DESC", conn)
+    conn.close()
+
+    if not df_swp_hist.empty:
+        # Calcular tasa implícita del cambio para referencia visual
+        df_swp_hist["tasa_implicita_cambio"] = df_swp_hist.apply(
+            lambda r: round(r["monto_origen"] / r["monto_destino"], 2) if r["moneda_origen"] == "VES" and r["moneda_destino"] == "USD"
+            else (round(r["monto_destino"] / r["monto_origen"], 2) if r["moneda_origen"] == "USD" and r["moneda_destino"] == "VES" else 1.0),
+            axis=1
+        )
+        st.markdown("#### 📜 Histórico de Swaps Realizados")
+        st.dataframe(df_swp_hist, use_container_width=True)
+
+        with st.expander("🗑️ Eliminar un Swap"):
+            op_swp = {
+                f"ID #{r['id']} | {r['fecha']} | {r['monto_origen']:,.2f} {r['moneda_origen']} ({r['cuenta_origen']}) ➡️ {r['monto_destino']:,.2f} {r['moneda_destino']} ({r['cuenta_destino']})": r['id']
+                for _, r in df_swp_hist.iterrows()
+            }
+            sel_swp = st.selectbox("Seleccionar Swap a borrar:", list(op_swp.keys()))
+            if st.button("🚨 Eliminar Swap", type="primary"):
+                conn = get_connection()
+                conn.execute("DELETE FROM swaps WHERE id = ?", (op_swp[sel_swp],))
                 conn.commit()
                 conn.close()
                 st.rerun()

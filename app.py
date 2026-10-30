@@ -121,7 +121,7 @@ def generar_pdf_cotizacion_usd(datos_oferta):
     pdf.add_page()
     
     # 1. ENCABEZADO CORPORATIVO CON LOGO Y RIF
-    pdf.set_fill_color(18, 28, 45)
+    pdf.set_fill_color(255, 255, 255)
     pdf.rect(0, 0, 210, 42, 'F')
     
     # Buscar automáticamente el logo en la carpeta del proyecto
@@ -130,7 +130,7 @@ def generar_pdf_cotizacion_usd(datos_oferta):
         if os.path.exists(nombre_logo):
             try:
                 # Fondo blanco suave detrás del logo para que resalte el cubo azul
-                pdf.set_fill_color(255, 255, 255)
+                pdf.set_fill_color(1, 73, 169)
                 pdf.rect(11, 5, 25, 31, 'F')
                 pdf.image(nombre_logo, x=12, y=6, w=23)
                 logo_insertado = True
@@ -145,7 +145,7 @@ def generar_pdf_cotizacion_usd(datos_oferta):
         pdf.cell(25, 10, "[PROTOFAB]")
 
     # Texto del encabezado
-    pdf.set_text_color(255, 255, 255)
+    pdf.set_text_color(1, 73, 169)
     pdf.set_xy(40, 10)
     pdf.set_font("Helvetica", "B", 22)
     pdf.cell(100, 10, "PROTOFAB", ln=True)
@@ -228,7 +228,7 @@ def generar_pdf_cotizacion_usd(datos_oferta):
     pdf.set_font("Helvetica", "", 9)
     Modalidad = f"Factura Fiscal (Incluye IVA {datos_oferta['iva_pct']}%)" if datos_oferta['es_facturable'] else "Nota de Entrega / Control Interno"
     pdf.multi_cell(0, 5, f"""1. Modalidad de documento: {Modalidad}.
-2. Moneda de referencia: Dólares estadounidenses (USD).
+2. Moneda de referencia: Dólares estadounidenses (USD) Tasa del dia BCV.
 3. Condiciones de pago: 50% de anticipo para iniciar producción / modelado CAD y 50% contra entrega.
 4. Validez de la oferta: 5 días continuos.""")
 

@@ -9,7 +9,6 @@ import requests
 from bs4 import BeautifulSoup
 import urllib3
 import re
-import os
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -29,7 +28,6 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
     
-    # 1. Tabla de Tasas Históricas BCV
     c.execute("""CREATE TABLE IF NOT EXISTS tasas_bcv (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         fecha DATE UNIQUE NOT NULL,
@@ -38,7 +36,6 @@ def init_db():
         notas TEXT
     );""")
     
-    # 2. Tabla de Ingresos (Soporta Swap y transacciones directas)
     c.execute("""CREATE TABLE IF NOT EXISTS ingresos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         fecha_cobro DATE NOT NULL,
@@ -59,7 +56,6 @@ def init_db():
         notas TEXT
     );""")
 
-    # 3. Tabla de Egresos
     c.execute("""CREATE TABLE IF NOT EXISTS egresos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         fecha_pago DATE NOT NULL,
@@ -79,18 +75,16 @@ def init_db():
         notas TEXT
     );""")
 
-    # 4. Tabla de Inventario de Materiales (Filamentos y Consumibles Varios)
     c.execute("""CREATE TABLE IF NOT EXISTS inventario_materiales (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        tipo_material TEXT NOT NULL, -- 'Filamento' o 'Consumible'
+        tipo_material TEXT NOT NULL,
         nombre_marca TEXT NOT NULL,
         color_descripcion TEXT NOT NULL,
         stock_cantidad REAL NOT NULL,
-        unidad TEXT NOT NULL, -- 'Gramos', 'Unidades', 'Metros'
+        unidad TEXT NOT NULL,
         costo_unitario_usd REAL NOT NULL
     );""")
 
-    # 5. Tabla de Deudas
     c.execute("""CREATE TABLE IF NOT EXISTS deudas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         fecha_registro DATE NOT NULL,
@@ -109,7 +103,6 @@ def init_db():
 
 init_db()
 
-# MOTOR BCV
 def consultar_tasa_bcv_online():
     tasa_oficial, tasa_paralelo = None, None
     try:
@@ -127,23 +120,6 @@ def consultar_tasa_bcv_online():
                 return round(tasa_oficial, 4), round(tasa_paralelo, 4), "API Oficial BCV"
     except Exception:
         pass
-
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp_bcv = requests.get("https://www.bcv.org.ve", headers=headers, verify=False, timeout=10)
-        if resp_bcv.status_code == 200:
-            soup = BeautifulSoup(resp_bcv.text, "html.parser")
-            div_dolar = soup.find("div", {"id": "dolar"})
-            if div_dolar:
-                strong_tag = div_dolar.find("strong")
-                if strong_tag:
-                    texto_valor = strong_tag.text.strip().replace(".", "").replace(",", ".")
-                    match = re.search(r"\d+(\.\d+)?", texto_valor)
-                    if match:
-                        tasa_oficial = float(match.group(0))
-                        return round(tasa_oficial, 4), round(tasa_oficial * 1.15, 2), "Web BCV"
-    except Exception:
-        pass
     return None, None, "Sin respuesta"
 
 def obtener_tasa_bcv_actual():
@@ -154,15 +130,11 @@ def obtener_tasa_bcv_actual():
         return float(df.iloc[0]["tasa_bcv"]), float(df.iloc[0]["tasa_paralelo"]), df.iloc[0]["fecha"]
     return 46.90, 54.80, str(date.today())
 
-# ==============================================================================
-# GENERADOR DE PDF EXCLUSIVO EN USD CON LOGO Y RIF DE PROTOFAB
-# ==============================================================================
 def generar_pdf_cotizacion_usd(datos_oferta):
     pdf = FPDF()
     pdf.add_page()
     
-    # 1. ENCABEZADO CORPORATIVO CON LOGO Y RIF
-    pdf.set_fill_color(18, 28, 45)  # Azul oscuro Protofab
+    pdf.set_fill_color(18, 28, 45)
     pdf.rect(0, 0, 210, 42, 'F')
     
     try:
@@ -184,7 +156,6 @@ def generar_pdf_cotizacion_usd(datos_oferta):
     pdf.set_xy(38, 25)
     pdf.cell(100, 5, "Maturín, Monagas, Venezuela   |   RIF: J-50769354-6", ln=True)
     
-    # Cuadro de Código de Oferta Editable
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_xy(140, 10)
     pdf.cell(58, 8, f"OFERTA: {datos_oferta['codigo']}", align="R", ln=True)
@@ -194,7 +165,6 @@ def generar_pdf_cotizacion_usd(datos_oferta):
     pdf.set_xy(140, 24)
     pdf.cell(58, 6, "Moneda: USD ($)", align="R", ln=True)
 
-    # 2. DATOS DEL CLIENTE
     pdf.set_text_color(30, 30, 30)
     pdf.set_xy(12, 48)
     pdf.set_font("Helvetica", "B", 11)
@@ -205,7 +175,6 @@ def generar_pdf_cotizacion_usd(datos_oferta):
     pdf.cell(0, 6, f"Categoría de Servicio: {datos_oferta['categoria']}", ln=True)
     pdf.ln(5)
 
-    # 3. TABLA DE MÚLTIPLES ÍTEMS
     pdf.set_fill_color(230, 235, 242)
     pdf.set_font("Helvetica", "B", 9)
     pdf.cell(12, 8, "Cant.", border=1, align="C", fill=True)
@@ -232,7 +201,6 @@ def generar_pdf_cotizacion_usd(datos_oferta):
 
     pdf.ln(4)
 
-    # Totales
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(135, 7, "", border=0)
     pdf.cell(35, 7, "Subtotal Sin IVA:", border=1, align="R")
@@ -249,7 +217,6 @@ def generar_pdf_cotizacion_usd(datos_oferta):
     pdf.cell(35, 9, "TOTAL A PAGAR:", border=1, align="R", fill=True)
     pdf.cell(20, 9, f"${datos_oferta['total_usd']:,.2f}", border=1, align="R", fill=True, ln=True)
 
-    # 4. CONDICIONES COMERCIALES
     pdf.set_text_color(30, 30, 30)
     pdf.ln(10)
     pdf.set_font("Helvetica", "B", 10)
@@ -287,7 +254,7 @@ with st.sidebar:
         "Navegación Principal",
         [
             "📊 1. Dashboard Directivo",
-            "💰 2. Registrar Ingresos & Swap",
+            "💰 2. Registrar Ingresos",
             "📉 3. Registrar Egresos",
             "📦 4. Inventario de Materiales",
             "🧮 5. Cotizador 3D (Múltiples Ítems)",
@@ -296,9 +263,6 @@ with st.sidebar:
         ]
     )
 
-# ==============================================================================
-# 1. DASHBOARD DIRECTIVO
-# ==============================================================================
 if modulo == "📊 1. Dashboard Directivo":
     st.header("📊 Dashboard Financiero, Fiscal y de Liquidez - Protofab")
     conn = get_connection()
@@ -328,90 +292,47 @@ if modulo == "📊 1. Dashboard Directivo":
     col4.metric("🏛️ Provisión SENIAT", f"${iva_por_pagar_usd:,.2f}")
     col5.metric("🤝 CxC vs CxP", f"${cxc_pendiente:,.2f} / -${cxp_pendiente:,.2f}")
 
-# ==============================================================================
-# 2. REGISTRAR INGRESOS & SWAP DE DIVISAS
-# ==============================================================================
-elif modulo == "💰 2. Registrar Ingresos & Swap":
-    st.header("💰 Registro de Ingresos y Operaciones Swap (Conversión / Divisas)")
-    
-    tab_ing, tab_swap = st.tabs(["📥 Ingreso Estándar", "💱 Operación Swap (Intercambio Divisas)"])
-    
-    with tab_ing:
-        with st.form("form_ingreso"):
-            c1, c2, c3 = st.columns(3)
-            fecha_cobro = c1.date_input("Fecha de Cobro", value=date.today())
-            cliente = c2.text_input("Cliente / Empresa")
-            categoria = c3.selectbox("Categoría", ["Impresión 3D bajo demanda", "Diseño 3D", "Diseño e impresión 3D", "Proyecto especial", "Otro"])
+elif modulo == "💰 2. Registrar Ingresos":
+    st.header("💰 Registro de Ingresos")
+    with st.form("form_ingreso"):
+        c1, c2, c3 = st.columns(3)
+        fecha_cobro = c1.date_input("Fecha de Cobro", value=date.today())
+        cliente = c2.text_input("Cliente / Empresa")
+        categoria = c3.selectbox("Categoría", ["Impresión 3D bajo demanda", "Diseño 3D", "Diseño e impresión 3D", "Proyecto especial", "Otro"])
 
-            c4, c5, c6, c7 = st.columns(4)
-            cuenta_destino = c4.selectbox("Cuenta Destino", ["Banco VES", "Efectivo USD", "Binance USDT / Zelle"])
-            moneda_orig = c5.selectbox("Moneda", ["USD", "VES"])
-            monto_orig = c6.number_input("Monto Cobrado", min_value=0.0, step=1.0)
-            tasa_op = c7.number_input("Tasa BCV del Día", min_value=1.0, value=tasa_actual, step=0.1)
+        c4, c5, c6, c7 = st.columns(4)
+        cuenta_destino = c4.selectbox("Cuenta Destino", ["Banco VES", "Efectivo USD", "Binance USDT / Zelle"])
+        moneda_orig = c5.selectbox("Moneda", ["USD", "VES"])
+        monto_orig = c6.number_input("Monto Cobrado", min_value=0.0, step=1.0)
+        tasa_op = c7.number_input("Tasa BCV del Día", min_value=1.0, value=tasa_actual, step=0.1)
 
-            c8, c9, c10 = st.columns([1, 1, 2])
-            es_facturable = c8.selectbox("Facturable (IVA 16%)?", ["No", "Sí"])
-            retencion_usd = c9.number_input("Retención IVA (USD)", min_value=0.0, value=0.0)
-            descripcion = c10.text_input("Descripción / Nº Factura")
+        c8, c9, c10 = st.columns([1, 1, 2])
+        es_facturable = c8.selectbox("Facturable (IVA 16%)?", ["No", "Sí"])
+        retencion_usd = c9.number_input("Retención IVA (USD)", min_value=0.0, value=0.0)
+        descripcion = c10.text_input("Descripción / Nº Factura")
 
-            if st.form_submit_button("💾 Guardar Ingreso") and monto_orig > 0:
-                total_ves = monto_orig * tasa_op if moneda_orig == "USD" else monto_orig
-                total_usd = monto_orig if moneda_orig == "USD" else monto_orig / tasa_op
-                fact_int = 1 if es_facturable == "Sí" else 0
-                base_usd = (total_usd / 1.16) if fact_int == 1 else total_usd
-                iva_usd = (total_usd - base_usd) if fact_int == 1 else 0.0
+        if st.form_submit_button("💾 Guardar Ingreso") and monto_orig > 0:
+            total_ves = monto_orig * tasa_op if moneda_orig == "USD" else monto_orig
+            total_usd = monto_orig if moneda_orig == "USD" else monto_orig / tasa_op
+            fact_int = 1 if es_facturable == "Sí" else 0
+            base_usd = (total_usd / 1.16) if fact_int == 1 else total_usd
+            iva_usd = (total_usd - base_usd) if fact_int == 1 else 0.0
 
-                conn = get_connection()
-                conn.execute("""INSERT INTO ingresos 
-                    (fecha_cobro, cliente, descripcion, categoria, cuenta_destino, moneda_original, monto_original, tasa_bcv_dia, total_ves, total_usd_bcv, es_facturable, base_imponible_usd, iva_debito_usd, iva_debito_ves, retencion_iva_usd, notas)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (str(fecha_cobro), cliente, descripcion, categoria, cuenta_destino, moneda_orig, monto_orig, tasa_op, total_ves, total_usd, fact_int, base_usd, iva_usd, iva_usd*tasa_op, retencion_usd, "Estándar"))
-                conn.commit()
-                conn.close()
-                st.success(f"✅ Ingreso guardado: ${total_usd:,.2f} USD")
-                st.rerun()
-
-    with tab_swap:
-        st.subheader("💱 Registrar Intercambio / Swap de Divisas")
-        st.write("Ejemplo: Entregaste 10,000 Bolívares y obtuviste 9.89 USDT, o viceversa.")
-        with st.form("form_swap"):
-            s1, s2 = st.columns(2)
-            fecha_swap = s1.date_input("Fecha del Swap", value=date.today())
-            concepto_swap = s2.text_input("Descripción del Swap", value="Cambio Bs a USDT / Zelle")
-
-            s3, s4, s5 = st.columns(3)
-            cuenta_origen_swap = s3.selectbox("Cuenta que entrega fondos", ["Banco VES", "Efectivo USD", "Binance USDT / Zelle"])
-            monto_entregado = s4.number_input("Monto Entregado", min_value=0.0, step=1.0)
-            moneda_entregada = s5.selectbox("Moneda Entregada", ["VES", "USD", "USDT"])
-
-            s6, s7 = st.columns(2)
-            cuenta_destino_swap = s6.selectbox("Cuenta que recibe fondos", ["Binance USDT / Zelle", "Efectivo USD", "Banco VES"])
-            monto_recibido = s7.number_input("Monto Recibido en la otra cuenta", min_value=0.0, step=1.0)
-
-            if st.form_submit_button("💱 Registrar Operación Swap"):
-                conn = get_connection()
-                # Registramos el egreso por los fondos que salen y el ingreso por los fondos que entran para balancear cajas
-                conn.execute("""INSERT INTO egresos (fecha_pago, proveedor_beneficiario, concepto, categoria, cuenta_origen, moneda_original, monto_original, tasa_bcv_dia, total_ves, total_usd_bcv, es_facturable, costo_base_usd, iva_credito_usd, iva_credito_ves, notas)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?)""",
-                    (str(fecha_swap), "Swap Operativo", concepto_swap, "Otros", cuenta_origen_swap, moneda_entregada, monto_entregado, tasa_actual, monto_entregado if moneda_entregada=="VES" else monto_entregado*tasa_actual, monto_entregado if moneda_entregada!="VES" else monto_entregado/tasa_actual, monto_entregado if moneda_entregada!="VES" else monto_entregado/tasa_actual, "Salida Swap"))
-                
-                conn.execute("""INSERT INTO ingresos (fecha_cobro, cliente, descripcion, categoria, cuenta_destino, moneda_original, monto_original, tasa_bcv_dia, total_ves, total_usd_bcv, es_facturable, base_imponible_usd, iva_debito_usd, iva_debito_ves, retencion_iva_usd, notas)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, 0, ?)""",
-                    (str(fecha_swap), "Swap Operativo", concepto_swap, "Otro", cuenta_destino_swap, "USD" if "USDT" in cuenta_destino_swap or "USD" in cuenta_destino_swap else "VES", monto_recibido, tasa_actual, monto_recibido*tasa_actual if "USD" in cuenta_destino_swap or "USDT" in cuenta_destino_swap else monto_recibido, monto_recibido if "USD" in cuenta_destino_swap or "USDT" in cuenta_destino_swap else monto_recibido/tasa_actual, monto_recibido if "USD" in cuenta_destino_swap or "USDT" in cuenta_destino_swap else monto_recibido/tasa_actual, "Entrada Swap"))
-                
-                conn.commit()
-                conn.close()
-                st.success("✅ Operación Swap registrada con éxito en los balances.")
-                st.rerun()
+            conn = get_connection()
+            conn.execute("""INSERT INTO ingresos 
+                (fecha_cobro, cliente, descripcion, categoria, cuenta_destino, moneda_original, monto_original, tasa_bcv_dia, total_ves, total_usd_bcv, es_facturable, base_imponible_usd, iva_debito_usd, iva_debito_ves, retencion_iva_usd, notas)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (str(fecha_cobro), cliente, descripcion, categoria, cuenta_destino, moneda_orig, monto_orig, tasa_op, total_ves, total_usd, fact_int, base_usd, iva_usd, iva_usd*tasa_op, retencion_usd, ""))
+            conn.commit()
+            conn.close()
+            st.success(f"✅ Ingreso guardado: ${total_usd:,.2f} USD")
+            st.rerun()
 
     conn = get_connection()
     df_ing = pd.read_sql_query("SELECT * FROM ingresos ORDER BY id DESC", conn)
     conn.close()
     st.dataframe(df_ing, use_container_width=True)
 
-# ==============================================================================
-# 3. REGISTRAR EGRESOS
-# ==============================================================================
 elif modulo == "📉 3. Registrar Egresos":
     st.header("📉 Registro de Egresos y Costos Operativos")
     with st.form("form_egreso"):
@@ -452,9 +373,6 @@ elif modulo == "📉 3. Registrar Egresos":
     conn.close()
     st.dataframe(df_egr, use_container_width=True)
 
-# ==============================================================================
-# 4. INVENTARIO DE MATERIALES (FILAMENTOS Y CONSUMIBLES)
-# ==============================================================================
 elif modulo == "📦 4. Inventario de Materiales":
     st.header("📦 Control de Inventario (Filamentos y Consumibles Varios)")
     
@@ -497,9 +415,6 @@ elif modulo == "📦 4. Inventario de Materiales":
                 st.success("✅ Ítem eliminado del inventario.")
                 st.rerun()
 
-# ==============================================================================
-# 5. COTIZADOR 3D DE MÚLTIPLES ÍTEMS + LOGO Y RIF PROTOFAB
-# ==============================================================================
 elif modulo == "🧮 5. Cotizador 3D (Múltiples Ítems)":
     st.header("🧮 Calculadora de Costos Impresión 3D (Múltiples Ítems Protofab)")
     
@@ -626,10 +541,11 @@ elif modulo == "🧮 5. Cotizador 3D (Múltiples Ítems)":
         st.info("⚠️ Agrega al menos un ítem al presupuesto para desplegar la sección del cliente y la opción de descarga del PDF.")
 
 # ==============================================================================
-# 6. DEUDAS (CxC / CxP)
+# 6. DEUDAS (CxC / CxP) CON FUNCIÓN DE SALDAR / ABONAR
 # ==============================================================================
 elif modulo == "📋 6. Deudas (CxC / CxP)":
-    st.header("📋 Cuentas por Cobrar y por Pagar")
+    st.header("📋 Cuentas por Cobrar (Clientes) y Cuentas por Pagar (Proveedores/Socios)")
+    
     with st.form("form_deuda"):
         c1, c2, c3, c4 = st.columns(4)
         tipo_d = c1.selectbox("Tipo", ["Por Cobrar (Cliente)", "Por Pagar (Proveedor/Socio)"])
@@ -639,25 +555,67 @@ elif modulo == "📋 6. Deudas (CxC / CxP)":
 
         c5, c6 = st.columns(2)
         monto_tot = c5.number_input("Monto Total ($)", min_value=0.0, step=5.0)
-        monto_abo = c6.number_input("Abonado ($)", min_value=0.0, step=5.0)
+        monto_abo = c6.number_input("Abono Inicial ($)", min_value=0.0, step=5.0)
 
-        if st.form_submit_button("💾 Guardar Deuda") and monto_tot > 0:
+        if st.form_submit_button("💾 Registrar Deuda") and monto_tot > 0:
             saldo = max(0.0, monto_tot - monto_abo)
-            estado_d = "Pagado" if saldo == 0 else ("Abono Parcial" if monto_abo > 0 else "Pendiente")
+            estado_d = "Pagada" if saldo == 0 else ("Abono Parcial" if monto_abo > 0 else "Pendiente")
             conn = get_connection()
             conn.execute("INSERT INTO deudas (fecha_registro, fecha_vencimiento, tipo, contraparte, concepto, monto_total_usd, monto_abonado_usd, saldo_pendiente_usd, estado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                          (str(date.today()), str(fecha_venc), tipo_d, contraparte, concepto_d, monto_tot, monto_abo, saldo, estado_d))
             conn.commit()
             conn.close()
-            st.success("✅ Deuda guardada.")
+            st.success("✅ Deuda guardada correctamente.")
             st.rerun()
 
     conn = get_connection()
     df_d = pd.read_sql_query("SELECT * FROM deudas ORDER BY id DESC", conn)
     conn.close()
-    if not df_d.empty:
-        df_d["equivalente_hoy_ves"] = df_d["saldo_pendiente_usd"] * tasa_actual
+    
+    st.subheader("📋 Cartera de Deudas Actual")
     st.dataframe(df_d, use_container_width=True)
+
+    if not df_d.empty:
+        st.divider()
+        st.subheader("💵 Registrar Abono o Saldar Deuda Existente")
+        with st.form("form_saldar"):
+            op_deudas = {f"ID #{r['id']} | [{r['tipo']}] {r['contraparte']} - Pendiente: ${r['saldo_pendiente_usd']:,.2f} USD ({r['concepto']})": r['id'] for _, r in df_d.iterrows() if r['saldo_pendiente_usd'] > 0}
+            
+            if op_deudas:
+                sel_deuda_key = st.selectbox("Selecciona la deuda a abonar/saldar:", list(op_deudas.keys()))
+                id_a_saldar = op_deudas[sel_deuda_key]
+                
+                # Buscar el saldo actual de ese ID
+                deuda_actual = df_d[df_d['id'] == id_a_saldar].iloc[0]
+                saldo_actual = deuda_actual['saldo_pendiente_usd']
+                
+                monto_abono_nuevo = st.number_input("Monto del Abono / Pago a realizar ($)", min_value=0.0, max_value=float(saldo_actual), value=float(saldo_actual), step=1.0)
+                
+                if st.form_submit_button("✅ Aplicar Abono / Saldar Deuda"):
+                    nuevo_abonado = deuda_actual['monto_abonado_usd'] + monto_abono_nuevo
+                    nuevo_saldo = max(0.0, deuda_actual['monto_total_usd'] - nuevo_abonado)
+                    nuevo_estado = "Pagada" if nuevo_saldo == 0 else "Abono Parcial"
+                    
+                    conn = get_connection()
+                    conn.execute("UPDATE deudas SET monto_abonado_usd = ?, saldo_pendiente_usd = ?, estado = ? WHERE id = ?",
+                                 (nuevo_abonado, nuevo_saldo, nuevo_estado, id_a_saldar))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"✅ ¡Deuda actualizada con éxito! Nuevo saldo pendiente: ${nuevo_saldo:,.2f} USD")
+                    st.rerun()
+            else:
+                st.info("No hay deudas pendientes por cobrar o pagar en este momento.")
+
+        with st.expander("🗑️ Eliminar Registro de Deuda"):
+            op_del = {f"ID #{r['id']} | {r['contraparte']} - ${r['saldo_pendiente_usd']:,.2f}": r['id'] for _, r in df_d.iterrows()}
+            sel_del = st.selectbox("Seleccionar deuda a eliminar:", list(op_del.keys()))
+            if st.button("🚨 Eliminar Registro", type="primary"):
+                conn = get_connection()
+                conn.execute("DELETE FROM deudas WHERE id = ?", (op_del[sel_del],))
+                conn.commit()
+                conn.close()
+                st.success("✅ Registro de deuda eliminado.")
+                st.rerun()
 
 # ==============================================================================
 # 7. TASAS BCV & LIMPIEZA
